@@ -1,0 +1,60 @@
+# Docker
+# Build and push an image to Azure Container Registry
+# https://docs.microsoft.com/azure/devops/pipelines/languages/docker
+
+trigger:
+  branches:
+    include:
+      - develop
+  paths:
+    include:
+      - 'datatransfer/*'
+pr: none  # no PR triggers
+
+resources:
+- repo: self
+
+variables:
+  # Container registry service connection established during pipeline creation
+  dockerRegistryServiceConnection: 'b357c373-4534-4732-8cc7-1185eb363846'
+  imageRepository: 'airlake-backend-datatransfer'
+  containerRegistry: 'dfcommondev.azurecr.io'
+  dockerfilePath: '$(Build.SourcesDirectory)/datatransfer/Dockerfile'
+  tag: '$(Build.BuildId)'
+
+  # Agent VM image name
+  vmImageName: 'ubuntu-latest'
+
+stages:
+- stage: Build
+  displayName: Build and push stage
+  jobs:
+  - job: Build
+    displayName: Build
+    pool:
+      vmImage: $(vmImageName)
+    steps:
+    - task: Docker@2
+      displayName: Build and push an image to container registry
+      inputs:
+        command: buildAndPush
+        repository: $(imageRepository)
+        dockerfile: $(dockerfilePath)
+        containerRegistry: $(dockerRegistryServiceConnection)
+        tags: |
+          $(tag)
+
+  - job: RunCD
+    displayName: Run CD
+    pool:
+      vmImage: $(vmImageName)
+    dependsOn: Build
+    steps:
+    - bash: echo ${AZURE_DEVOPS_CLI_PAT} | az devops login
+      env:
+        AZURE_DEVOPS_CLI_PAT: $(System.AccessToken)
+      displayName: 'Login Azure DevOps Extension'
+    - bash: az devops configure --defaults organization=$(System.TeamFoundationCollectionUri) project=$(System.TeamProject)
+      displayName: 'Set default Azure DevOps organization and project'
+    - bash: az pipelines run --id 22 --branch dev --variables MODE=dev IMAGE_NAMES=$(containerRegistry)/$(imageRepository) IMAGE_TAGS=$(tag)
+      displayName: 'Run pipeline with variables'
